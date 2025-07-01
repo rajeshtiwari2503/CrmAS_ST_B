@@ -6,7 +6,7 @@ const SubCategoryModal = require("../models/subCategory")
 const BrandRechargeModel = require("../models/brandRecharge")
 const WalletModel = require("../models/wallet")
 const ProductWarrantyModal = require("../models/productWarranty")
-
+const OrderModel = require("../models/order")
 const ServicePaymentModel = require("../models/servicePaymentModel")
 const moment = require('moment');
 
@@ -30,12 +30,15 @@ const addComplaint = async (req, res) => {
          brandId,
          uniqueId,
          district,
+         createEmpName,
          state,
       } = body;
 
       const email = emailAddress;
       const productName = body?.productName;
       const productId = body?.productId;
+      const createEmpName1 = createEmpName || fullName;
+
       // Create or find user
       const user = await findOrCreateUser(email, fullName, phoneNumber, serviceAddress);
 
@@ -49,27 +52,38 @@ const addComplaint = async (req, res) => {
 
       // Find service center
       const serviceCenter = await findServiceCenter(pincode, brandId);
+      const generateOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
 
+      const otp = generateOtp();
       // Prepare complaint object
       const complaintData = {
          ...body,
          userId: user._id,
          userName: user.name,
          issueImages: req.file?.location,
-         assignServiceCenterId: serviceCenter?._id,
-         assignServiceCenter: serviceCenter?.serviceCenterName,
-         serviceCenterContact: serviceCenter?.contact,
-         assignServiceCenterTime: new Date(),
-         status: serviceCenter ? 'ASSIGN' : 'PENDING',
+         // assignServiceCenterId: serviceCenter?._id,
+         // assignServiceCenter: serviceCenter?.serviceCenterName,
+         // serviceCenterContact: serviceCenter?.contact,
+         // assignServiceCenterTime: new Date(),
+         // status: serviceCenter ? 'ASSIGN' : 'PENDING',
+         createEmpName: createEmpName1,
+         otp: otp
       };
 
       const complaint = new ComplaintModal(complaintData);
       await complaint.save();
 
       // Prepare and send SMS
-     const visitTime = moment(
-  `${moment(complaint.preferredServiceDate).format('YYYY-MM-DD')}T${complaint.preferredServiceTime}`
-).format('hh:mm A on MMMM D, YYYY');
+      const preferredDate = complaint.preferredServiceDate
+         ? moment(complaint.preferredServiceDate)
+         : moment().add(1, 'days'); // Tomorrow's date if not present
+
+      const preferredTime = complaint.preferredServiceTime || '09:00'; // Default time if not present
+
+      const visitTime = moment(
+         `${preferredDate.format('YYYY-MM-DD')}T${preferredTime}`
+      ).format('hh:mm A on MMMM D, YYYY');
+
       const smsVars = smsTemplates.COMPLAINT_REGISTERED.buildVars({
          fullName,
          complaintId: complaint.complaintId || complaint._id.toString(),
@@ -155,7 +169,33 @@ const handleWarrantyUpdate = async (uniqueId, productName, productId, fullName, 
 
       console.log('Update result', result);
       console.timeEnd('Update Warranty');
+ // Emit socket only if updated successfully
+ 
+// const io = req.app.get('socketio');
 
+//     if (result.modifiedCount > 0 && io) {
+//       const payload = {
+        
+//           uniqueId,
+//           productName,
+//           productId,
+//           fullName,
+//           email,
+//           contact,
+//           address,
+//           district,
+//           state,
+//           pincode,
+//           activationDate: new Date(),
+        
+//         message: `Warranty activated for ${productName} by ${fullName}`
+//       };
+
+//       // console.log("📢 Emitting warrantyUpdated:", payload);
+//       io.emit('warrantyActivated', payload);
+//     }
+
+    
       // Check if the update matched and modified a document
       return result.modifiedCount > 0;
    } catch (err) {
@@ -715,7 +755,7 @@ const getCompleteComplaintByUserContact = async (req, res) => {
       const { phoneNumber } = req.query; // or req.body or req.params based on your route setup
       //  console.log("req.query",req.body);
       //  console.log("phoneNumber",req.query);
-      console.log("phoneNumber", phoneNumber);
+      // console.log("phoneNumber", phoneNumber);
       if (!phoneNumber) {
          return res.status(400).send({ status: false, msg: "Phone number is required." });
       }
@@ -1274,7 +1314,7 @@ const getPendingComplaints = async (req, res) => {
       } else if (days === "2-5") {
          startDate = new Date(now);
          startDate.setDate(now.getDate() - 5);
-         startDate.setHours(0, 0, 0, 0);
+         startDate.setHours(23, 59, 59, 999);
 
          endDate = new Date(now);
          endDate.setDate(now.getDate() - 2);
@@ -1287,9 +1327,13 @@ const getPendingComplaints = async (req, res) => {
       const activeBrands = await BrandRegistrationModel.find({ status: "ACTIVE" })
          .select("_id")
          .lean();
+
       const activeBrandIds = activeBrands.map((b) => b._id.toString());
-      //   let filter = { status: "PENDING"||"IN PROGRESS" };
-      let filter = { status: { $in: ["PENDING", "IN PROGRESS"] }, brandId: { $in: activeBrandIds } };
+
+      let filter = {
+         status: { $nin: ["COMPLETED", "FINAL VERIFICATION", "CANCELED"] },
+         brandId: { $in: activeBrandIds }
+      };
 
       if (days === "0-1" || days === "2-5") {
          filter.createdAt = { $gte: startDate, $lte: endDate };
@@ -1307,7 +1351,8 @@ const getPendingComplaints = async (req, res) => {
 
             {
                preferredServiceDate: { $lt: today },
-               status: { $nin: ["COMPLETED", "FINAL VERIFICATION", "CANCELED"] }
+               status: { $nin: ["COMPLETED", "FINAL VERIFICATION", "CANCELED"] },
+               brandId: { $in: activeBrandIds }
             } // Past but not completed
          ]
       }).sort({ preferredServiceDate: 1 });
@@ -1336,14 +1381,14 @@ const getPartPendingComplaints = async (req, res) => {
       } else if (days === "2-5") {
          startDate = new Date(now);
          startDate.setDate(now.getDate() - 5);
-         startDate.setHours(0, 0, 0, 0);
+         startDate.setHours(23, 59, 59, 999);
 
          endDate = new Date(now);
          endDate.setDate(now.getDate() - 2);
          endDate.setHours(23, 59, 59, 999);
       } else if (days === "more-than-week") {
          endDate = new Date(now);
-         endDate.setDate(now.getDate() - 6); // Ensure correct range
+         endDate.setDate(now.getDate() - 5); // Ensure correct range
          endDate.setHours(23, 59, 59, 999);
       }
       const activeBrands = await BrandRegistrationModel.find({ status: "ACTIVE" })
@@ -1448,7 +1493,9 @@ const editComplaint = async (req, res) => {
       if (body.status === "PART PENDING") {
          data.cspStatus = "YES";
       }
-
+      if (body.status === "CUSTOMER SIDE PENDING") {
+         data.cspStatus = "YES";
+      }
       if (body.status === "FINAL VERIFICATION") {
          data.complaintCloseTime = new Date();
 
@@ -1460,11 +1507,59 @@ const editComplaint = async (req, res) => {
       if (!data.complaintCloseTime && body.complaintCloseTime) {
          data.complaintCloseTime = new Date(); // Set only if it was never set before
       }
+
+
+      let dataComp = await ComplaintModal.findById(_id);
+
+
+      const oldStatus = dataComp.status;
+
       // Apply updates to the complaint object
       Object.assign(data, body);
 
       // Save the updated complaint
       await data.save();
+
+
+      // Save original value before applying any changes
+
+
+      // Check if status has changed before emitting socket event
+      // if (body.status && body.status !== oldStatus) {
+      //    const io = req.app.get('socketio');
+
+      //    const payload = {
+      //       complaintId: data._id,
+      //       complaintNumber: data.complaintId,
+      //       status: data.status,
+      //       brandId: data.brandId,
+      //       assignedTo: {
+      //          serviceCenterId: data.assignServiceCenterId,
+      //       },
+      //       fullName: data.fullName,
+      //       phoneNumber: data.phoneNumber,
+      //       productBrand: data.productBrand,
+      //       productName: data.productName,
+      //       updatedAt: new Date(),
+      //       contact: data.contact || data.phoneNumber,
+      //       pincode: data.pincode,
+      //       assignServiceCenter: data.assignServiceCenter,
+      //       district: data.district,
+      //       state: data.state,
+      //       message: `Complaint ${data.complaintId} status updated from ${oldStatus} to ${data.status}`,
+      //    };
+
+      //    if (io) {
+      //       // console.log("📢 Emitting complaintStatusUpdated:", payload);
+      //       io.emit('complaintStatusUpdated', payload);
+      //    } else {
+      //       console.warn("⚠️ Socket.IO instance not found on app object");
+      //    }
+      // }
+
+
+
+
       if (body.assignServiceCenterId) {
          if (body.status === "ASSIGN") {
 
@@ -1611,16 +1706,30 @@ const updatePartPendingImage = async (req, res) => {
          data.partPendingImage = image;
       }
 
+      // data.updateHistory.push({
+      //    updatedAt: new Date(),
+      //    changes: { ...body },
+      // });
+      const sanitizedChanges = { ...body };
+
+      // Sanitize serviceCenterId
+      if (Array.isArray(sanitizedChanges.serviceCenterId)) {
+         sanitizedChanges.serviceCenterId = sanitizedChanges.serviceCenterId[0]; // or join(',') if multiple values make sense
+      }
+
       data.updateHistory.push({
          updatedAt: new Date(),
-         changes: { ...body },
+         changes: sanitizedChanges,
       });
+
 
       // Handle status updates
       if (body.status === "PART PENDING") {
          data.cspStatus = "YES";
       }
-
+      if (body.status === "CUSTOMER SIDE PENDING") {
+         data.cspStatus = "YES";
+      }
       if (["FINAL VERIFICATION", "COMPLETED"].includes(body.status)) {
          data.complaintCloseTime = new Date();
       }
@@ -1663,6 +1772,38 @@ const updatePartPendingImage = async (req, res) => {
             message: `Assign Technician on Your Complaint!`,
          }).save();
       }
+      if (body.status === "FINAL VERIFICATION") {
+         data.complaintCloseTime = new Date();
+
+         let spareParts = body.spareParts;
+
+         if (typeof spareParts === "string") {
+            try {
+               spareParts = JSON.parse(spareParts);
+            } catch (error) {
+               spareParts = []; // fallback to empty array
+            }
+         }
+
+         if (Array.isArray(spareParts) && spareParts.length > 0) {
+            const chalanImage = req.file ? req.file.location || req.file.path : null;
+
+            const newOrder = new OrderModel({
+               spareParts,
+               brandId: body.brandId || data.brandId,
+               brandName: body.brandName || data.productBrand,
+               serviceCenterId: body.serviceCenterId || data.assignServiceCenterId,
+               serviceCenter: body.serviceCenter || data.assignServiceCenter,
+
+            });
+            console.log("newOrder", newOrder);
+
+            await newOrder.save();
+         }
+
+         // Continue with the rest of your complaint update logic...
+      }
+
 
       // Wallet & Payout handling
       if (body.status === "COMPLETED") {
