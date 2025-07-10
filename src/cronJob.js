@@ -104,29 +104,29 @@ const { admin } = require('../src/firebase/index')
 
 
 
-// const sendNotification = async (serviceCenterId, title, body) => {
-//   try {
-//     // Fetch the service center's token from the database
-//     const serviceCenter = await ServiceModel.findById(serviceCenterId);
-//     if (!serviceCenter || !serviceCenter.fcmToken) {
-//       console.error("Service center or token not found");
-//       return;
-//     }
+const sendNotification = async (serviceCenterId, title, body) => {
+  try {
+    // Fetch the service center's token from the database
+    const serviceCenter = await ServiceModel.findById(serviceCenterId);
+    if (!serviceCenter || !serviceCenter.fcmToken) {
+      console.error("Service center or token not found");
+      return;
+    }
 
-//     // Send the notification using the retrieved token
-//     await admin.messaging().send({
-//       token: serviceCenter.fcmToken,
-//       notification: {
-//         title: title,
-//         body: body,
-//       },
-//     });
+    // Send the notification using the retrieved token
+    await admin.messaging().send({
+      token: serviceCenter.fcmToken,
+      notification: {
+        title: title,
+        body: body,
+      },
+    });
 
-//     console.log("Notification sent successfully to", serviceCenterId);
-//   } catch (error) {
-//     console.error("Notification failed", error);
-//   }
-// };
+    console.log("Notification sent successfully to", serviceCenterId);
+  } catch (error) {
+    console.error("Notification failed", error);
+  }
+};
 
 const moment = require('moment');
 const { Client } = require('@googlemaps/google-maps-services-js');
@@ -477,10 +477,11 @@ const createWalletTransactions = async () => {
       });
 
       if (!serviceCenter) {
-        console.warn(`Skipping service center ${centerId} — not found or not Authorized`);
+console.warn(`❌ Skipping service center ${centerId}, name: ${serviceCenter?.serviceCenterName ?? 'N/A'} — not found or not Authorized`);
+
         continue;
       }
-
+console.log(`Processing service center ${centerId} - ${serviceCenter.serviceCenterName}`);
       for (const data of centerComplaints) {
         if (!data.pincode || !serviceCenter.postalCode) continue;
 
@@ -692,7 +693,7 @@ const createWalletTransactions = async () => {
 //   }
 // };
 
-cron.schedule("15 11 1 7 *", () => {
+cron.schedule("01 15 10 7 *", () => {
   console.log("⏰ Running wallet transaction job on July 1st, 2025 at 11:08 AM...");
   createWalletTransactions();
 });
